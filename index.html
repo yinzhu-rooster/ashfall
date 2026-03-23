@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ashfall</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="game-container"></div>
+    <div id="ui-overlay">
+      <div id="time-controls">
+        <button id="btn-pause" title="Pause">⏸</button>
+        <button id="btn-play" title="Play">▶</button>
+        <button id="btn-fast" title="Fast">⏩</button>
+        <span id="time-display">Day 1 — 06:00</span>
+      </div>
+      <div id="resource-bar">
+        <span class="resource">Food: <span id="res-food">0</span></span>
+        <span class="resource">Water: <span id="res-water">0</span></span>
+        <span class="resource">Materials: <span id="res-materials">0</span></span>
+      </div>
+      <div id="entity-panel" class="hidden">
+        <h3 id="panel-name">—</h3>
+        <p id="panel-background" class="panel-subtitle">—</p>
+        <div id="panel-needs"></div>
+        <div id="panel-activity"></div>
+        <div id="panel-inventory"></div>
+        <div id="panel-stats"></div>
+      </div>
+      <div id="survivor-list"></div>
+      <div id="toolbar">
+        <button id="btn-stockpile" title="Designate Stockpile Zone">Stockpile</button>
+        <button id="btn-build" title="Build Structures">Build</button>
+        <button id="btn-save" title="Save">Save</button>
+        <button id="btn-load" title="Load">Load</button>
+      </div>
+      <div id="build-menu" class="hidden"></div>
+      <div id="mode-indicator" class="hidden"></div>
+      <div id="death-overlay" class="hidden">
+        <div id="death-message">
+          <h2>All survivors lost.</h2>
+          <p>The wasteland claims another group.</p>
+          <button id="btn-restart">Start Over</button>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
