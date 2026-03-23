@@ -46,6 +46,11 @@ export const FIRST_NAMES = [
   'Kai', 'Blake', 'Dana', 'Jesse', 'Reese',
 ];
 
+export type WorkType = 'haul' | 'build' | 'scavenge';
+export type WorkPriority = 0 | 1 | 2 | 3; // 0=disabled, 1=high, 2=normal, 3=low
+export type WorkPriorities = Record<WorkType, WorkPriority>;
+export const DEFAULT_WORK_PRIORITIES: WorkPriorities = { haul: 2, build: 2, scavenge: 2 };
+
 let nextSurvivorId = 1;
 export function getNextSurvivorId(): number {
   return nextSurvivorId++;

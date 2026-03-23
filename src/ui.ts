@@ -5,6 +5,7 @@ import { POI } from './poi';
 import { ItemCategory } from './items';
 import { BuildingManager, StructureType, STRUCTURE_DEFS } from './building';
 import { SocialManager } from './social';
+import { WorkType, WorkPriority } from './types';
 
 export type InteractionMode = 'select' | 'stockpile' | 'build';
 
@@ -21,6 +22,7 @@ export class UI {
   private panelBackground: HTMLElement;
   private panelNeeds: HTMLElement;
   private panelActivity: HTMLElement;
+  private panelPriorities: HTMLElement;
   private panelStats: HTMLElement;
   private panelInventory: HTMLElement;
   private btnSave: HTMLButtonElement;
@@ -62,6 +64,7 @@ export class UI {
     this.panelBackground = document.getElementById('panel-background')!;
     this.panelNeeds = document.getElementById('panel-needs')!;
     this.panelActivity = document.getElementById('panel-activity')!;
+    this.panelPriorities = document.getElementById('panel-priorities')!;
     this.panelStats = document.getElementById('panel-stats')!;
     this.panelInventory = document.getElementById('panel-inventory')!;
     this.btnSave = document.getElementById('btn-save') as HTMLButtonElement;
@@ -162,6 +165,41 @@ export class UI {
       this.panelNeeds.appendChild(row);
     }
 
+    // Work priorities (only for alive survivors)
+    this.panelPriorities.innerHTML = '';
+    if (survivor.state === 'alive') {
+      const priHeader = document.createElement('div');
+      priHeader.className = 'inventory-header';
+      priHeader.textContent = 'Work Priorities';
+      this.panelPriorities.appendChild(priHeader);
+
+      const workTypes: WorkType[] = ['haul', 'build', 'scavenge'];
+      const workLabels: Record<WorkType, string> = { haul: 'Haul', build: 'Build', scavenge: 'Scavenge' };
+      const priLabels = ['Off', '!!!', '!!', '!'];
+
+      for (const wt of workTypes) {
+        const row = document.createElement('div');
+        row.className = 'priority-row';
+
+        const label = document.createElement('span');
+        label.className = 'priority-label';
+        label.textContent = workLabels[wt];
+
+        const btn = document.createElement('button');
+        btn.className = 'priority-btn';
+        const pri = survivor.workPriorities[wt];
+        btn.textContent = priLabels[pri]!;
+        btn.dataset['pri'] = String(pri);
+        btn.addEventListener('click', () => {
+          survivor.workPriorities[wt] = ((survivor.workPriorities[wt] + 1) % 4) as WorkPriority;
+        });
+
+        row.appendChild(label);
+        row.appendChild(btn);
+        this.panelPriorities.appendChild(row);
+      }
+    }
+
     // Inventory
     this.panelInventory.innerHTML = '';
     if (survivor.inventory.items.length > 0) {
@@ -225,6 +263,7 @@ export class UI {
     this.panelBackground.textContent = poi.scavengedFully ? 'Fully scavenged' : `Loot remaining: ${poi.lootRemaining}/${poi.maxLoot}`;
     this.panelNeeds.innerHTML = '';
     this.panelActivity.textContent = '';
+    this.panelPriorities.innerHTML = '';
     this.panelInventory.innerHTML = '';
     this.panelStats.innerHTML = '';
   }
@@ -235,6 +274,7 @@ export class UI {
     this.panelBackground.textContent = `${stockpile.tiles.length} tiles, ${stockpile.items.length} items`;
     this.panelNeeds.innerHTML = '';
     this.panelActivity.textContent = '';
+    this.panelPriorities.innerHTML = '';
     this.panelStats.innerHTML = '';
 
     // Show item breakdown
@@ -411,6 +451,7 @@ export class UI {
       : `Building... ${Math.round((s.buildProgress / s.def.buildTicks) * 100)}%`;
     this.panelNeeds.innerHTML = '';
     this.panelActivity.textContent = '';
+    this.panelPriorities.innerHTML = '';
     this.panelInventory.innerHTML = '';
     this.panelStats.innerHTML = '';
   }

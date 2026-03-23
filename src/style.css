@@ -291,6 +291,47 @@ body {
   display: none;
 }
 
+#panel-priorities {
+  margin-bottom: 10px;
+}
+
+.priority-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2px;
+  font-size: 12px;
+}
+
+.priority-label {
+  color: #908870;
+  width: 70px;
+}
+
+.priority-btn {
+  background: none;
+  border: 1px solid #3a3630;
+  color: #d0c8b0;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  min-width: 36px;
+}
+
+.priority-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.priority-btn[data-pri="0"] {
+  color: #666;
+}
+
+.priority-btn[data-pri="1"] {
+  color: #c8b060;
+}
+
 #panel-inventory {
   margin-bottom: 10px;
 }

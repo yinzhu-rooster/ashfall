@@ -1,6 +1,6 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { TILE_SIZE, SEARCH_RADIUS } from './constants';
-import { Stats, Background, BACKGROUNDS, FIRST_NAMES, getNextSurvivorId } from './types';
+import { Stats, Background, BACKGROUNDS, FIRST_NAMES, getNextSurvivorId, type WorkPriorities, DEFAULT_WORK_PRIORITIES } from './types';
 import { isWalkable } from './terrain';
 import { ResourceManager, ResourceType } from './resources';
 import { Inventory, ItemCategory } from './items';
@@ -78,6 +78,9 @@ export class Survivor {
   private mentalBreak = false;
   private mentalBreakTimer = 0;
   private readonly MENTAL_BREAK_DURATION = 30; // ticks
+
+  // Work priorities (player-controlled)
+  workPriorities: WorkPriorities = { ...DEFAULT_WORK_PRIORITIES };
 
   // Inventory
   readonly inventory: Inventory;
@@ -173,14 +176,23 @@ export class Survivor {
   /** Movement speed multiplier */
   get moveSpeed(): number {
     let speed = 1.0;
-    // Park Ranger (high STR+RES) moves faster
     speed += (this.stats.dexterity - 7) * 0.03;
+    if (this.background.title === 'Former Park Ranger') speed += 0.15;
     return Math.max(0.5, Math.min(1.5, speed));
   }
 
-  /** Food efficiency — Chef background (high DEX+INT) gets more from food */
+  /** Food efficiency — Chef background gets explicit bonus */
   get foodEfficiency(): number {
-    return 1.0 + (this.stats.intelligence - 7) * 0.03;
+    let eff = 1.0 + (this.stats.intelligence - 7) * 0.03;
+    if (this.background.title === 'Former Chef') eff += 0.25;
+    return eff;
+  }
+
+  /** Build speed — Mechanic background gets explicit bonus */
+  get buildSpeed(): number {
+    let speed = this.workSpeed;
+    if (this.background.title === 'Former Mechanic') speed += 0.25;
+    return speed;
   }
 
   tick(
@@ -197,11 +209,14 @@ export class Survivor {
     this.thirst -= THIRST_DECAY_PER_TICK;
 
     if ((isNight || this.aiGoal === 'seek_bed') && (this.aiGoal === 'rest' || this.aiGoal === 'seek_bed')) {
-      // Rest recovery with building bonuses
-      const restBonus = buildings.getRestBonus(this.tileX, this.tileY);
-      this.rest = Math.min(NEED_MAX, this.rest + REST_RECOVERY_PER_TICK * (1 + restBonus));
+      // Rest recovery with building bonuses + EMT bonus
+      let recoveryMult = 1 + buildings.getRestBonus(this.tileX, this.tileY);
+      if (this.background.title === 'Former EMT') recoveryMult += 0.3;
+      this.rest = Math.min(NEED_MAX, this.rest + REST_RECOVERY_PER_TICK * recoveryMult);
     } else {
-      this.rest -= REST_DECAY_PER_TICK;
+      let restDecay = REST_DECAY_PER_TICK;
+      if (this.background.title === 'Former Park Ranger') restDecay *= 0.75;
+      this.rest -= restDecay;
     }
 
     this.hunger = Math.max(0, this.hunger);
@@ -257,7 +272,7 @@ export class Survivor {
     // Handle active building
     if (this.isBuilding && this.buildTarget) {
       this.buildTimer++;
-      const buildInterval = Math.max(1, Math.round(3 / this.workSpeed));
+      const buildInterval = Math.max(1, Math.round(3 / this.buildSpeed));
       if (this.buildTimer >= buildInterval) {
         this.buildTimer = 0;
         const done = buildings.progressBuild(this.buildTarget);
@@ -289,8 +304,12 @@ export class Survivor {
   private tryLearnKnowledge(buildings: BuildingManager): void {
     const knowledge = this.inventory.findByCategory('knowledge');
     if (knowledge) {
-      buildings.unlockKnowledge(knowledge.name);
+      const isNew = buildings.unlockKnowledge(knowledge.name);
       this.inventory.remove(knowledge);
+      if (isNew) {
+        // Teacher gets bigger morale boost from learning
+        this.addMorale(this.background.title === 'Former Teacher' ? 8 : 3);
+      }
     }
   }
 
@@ -339,27 +358,39 @@ export class Survivor {
       }
     }
 
-    // If carrying items, haul to stockpile
-    if (!this.inventory.isEmpty() && stockpile.tiles.length > 0) {
-      this.aiGoal = 'haul_to_stockpile';
-      return;
+    // Pick work by player-set priority (1=high, 2=normal, 3=low, 0=disabled)
+    type WorkCandidate = { type: 'haul' | 'build' | 'scavenge'; pri: number };
+    const workCandidates: WorkCandidate[] = [];
+
+    if (this.workPriorities.haul > 0 && !this.inventory.isEmpty() && stockpile.tiles.length > 0) {
+      workCandidates.push({ type: 'haul', pri: this.workPriorities.haul });
     }
 
-    // If there are blueprints to build and stockpile has materials
-    const blueprint = buildings.findNearestBlueprint(this.tileX, this.tileY, SEARCH_RADIUS);
-    if (blueprint && buildings.canAfford(blueprint.type, stockpile)) {
-      this.aiGoal = 'build';
-      this.buildTarget = blueprint;
-      return;
+    let blueprint: Structure | null = null;
+    if (this.workPriorities.build > 0) {
+      blueprint = buildings.findNearestBlueprint(this.tileX, this.tileY, SEARCH_RADIUS);
+      if (blueprint && buildings.canAfford(blueprint.type, stockpile)) {
+        workCandidates.push({ type: 'build', pri: this.workPriorities.build });
+      }
     }
 
-    // If POIs have loot, go scavenge
-    poiManager.ensureAround(this.tileX, this.tileY, SEARCH_RADIUS);
-    const nearestPOI = poiManager.findNearestWithLoot(this.tileX, this.tileY, SEARCH_RADIUS);
-    if (nearestPOI && this.inventory.freeWeight >= 1) {
-      this.aiGoal = 'scavenge';
-      this.scavengeTarget = nearestPOI;
-      return;
+    let nearestPOI: POI | null = null;
+    if (this.workPriorities.scavenge > 0 && this.inventory.freeWeight >= 1) {
+      poiManager.ensureAround(this.tileX, this.tileY, SEARCH_RADIUS);
+      nearestPOI = poiManager.findNearestWithLoot(this.tileX, this.tileY, SEARCH_RADIUS);
+      if (nearestPOI) {
+        workCandidates.push({ type: 'scavenge', pri: this.workPriorities.scavenge });
+      }
+    }
+
+    // Sort by priority (1 before 2 before 3)
+    workCandidates.sort((a, b) => a.pri - b.pri);
+
+    if (workCandidates.length > 0) {
+      const best = workCandidates[0]!;
+      if (best.type === 'haul') { this.aiGoal = 'haul_to_stockpile'; return; }
+      if (best.type === 'build') { this.aiGoal = 'build'; this.buildTarget = blueprint!; return; }
+      if (best.type === 'scavenge') { this.aiGoal = 'scavenge'; this.scavengeTarget = nearestPOI!; return; }
     }
 
     this.aiGoal = 'wander';
@@ -381,6 +412,10 @@ export class Survivor {
     return false;
   }
 
+  private consumeFood(): void {
+    if (this.background.title === 'Former Chef') this.addMorale(2);
+  }
+
   private tryConsume(resources: ResourceManager, stockpile: Stockpile): void {
     // Only consume from inventory when actually seeking that resource (need is low)
     if (this.aiGoal === 'seek_food' || this.hunger < NEED_SEEK_THRESHOLD) {
@@ -388,6 +423,7 @@ export class Survivor {
       if (food) {
         this.hunger = Math.min(NEED_MAX, this.hunger + food.value * this.foodEfficiency);
         this.inventory.remove(food);
+        this.consumeFood();
         return;
       }
     }
@@ -406,6 +442,7 @@ export class Survivor {
       if (pickup.type === 'food' && this.hunger < NEED_SEEK_THRESHOLD) {
         this.hunger = Math.min(NEED_MAX, this.hunger + pickup.amount);
         resources.remove(pickup);
+        this.consumeFood();
       } else if (pickup.type === 'water' && this.thirst < NEED_SEEK_THRESHOLD) {
         this.thirst = Math.min(NEED_MAX, this.thirst + pickup.amount);
         resources.remove(pickup);
@@ -418,6 +455,7 @@ export class Survivor {
         const food = stockpile.takeItem('food');
         if (food) {
           this.hunger = Math.min(NEED_MAX, this.hunger + food.value * this.foodEfficiency);
+          this.consumeFood();
         }
       }
       if (this.thirst < NEED_SEEK_THRESHOLD) {
@@ -556,8 +594,11 @@ export class Survivor {
       // Auto-learn knowledge
       for (const item of [...this.inventory.items]) {
         if (item.category === 'knowledge') {
-          buildings.unlockKnowledge(item.name);
+          const isNew = buildings.unlockKnowledge(item.name);
           this.inventory.remove(item);
+          if (isNew) {
+            this.addMorale(this.background.title === 'Former Teacher' ? 8 : 3);
+          }
         }
       }
       this.scavengeTarget = null;
@@ -771,6 +812,7 @@ export class Survivor {
       rest: this.rest,
       morale: this.morale,
       inventory: this.inventory.items,
+      workPriorities: this.workPriorities,
     };
   }
 
@@ -787,6 +829,9 @@ export class Survivor {
     this.thirst = (data['thirst'] as number) ?? NEED_MAX;
     this.rest = (data['rest'] as number) ?? NEED_MAX;
     this.morale = (data['morale'] as number) ?? 70;
+    if (data['workPriorities']) {
+      this.workPriorities = data['workPriorities'] as WorkPriorities;
+    }
     this.updateVisualPosition();
     if (this.state === 'dead') {
       this.die();
