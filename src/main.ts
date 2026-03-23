@@ -11,6 +11,7 @@ import { BuildingManager } from './building';
 import { UI } from './ui';
 import { BACKGROUNDS } from './types';
 import { SocialManager } from './social';
+import { ThreatManager } from './combat';
 import { saveGame, loadGame, hasSave, type SaveData } from './save';
 
 const RESOURCE_RESPAWN_TICKS = 80;
@@ -93,6 +94,10 @@ async function boot() {
   // Social
   const social = new SocialManager();
 
+  // Threats
+  const threats = new ThreatManager();
+  world.addChild(threats.container);
+
   // Survivors — start with 3, each with a different background
   const survivors: Survivor[] = [];
   function createSurvivor(x: number, y: number, bg?: typeof BACKGROUNDS[number]): Survivor {
@@ -153,6 +158,7 @@ async function boot() {
     | { type: 'poi'; entity: ReturnType<typeof poiManager.poiAt> }
     | { type: 'stockpile' }
     | { type: 'structure'; entity: ReturnType<typeof buildings.structureAt> }
+    | { type: 'enemy'; entity: ReturnType<typeof threats.enemyAt> }
     | null = null;
 
   app.canvas.addEventListener('click', (e: MouseEvent) => {
@@ -184,6 +190,13 @@ async function boot() {
     if (clickedSurvivor) {
       selected = { type: 'survivor', entity: clickedSurvivor };
       ui.showSurvivor(clickedSurvivor, social, survivors);
+      return;
+    }
+
+    const clickedEnemy = threats.enemyAt(tx, ty);
+    if (clickedEnemy) {
+      selected = { type: 'enemy', entity: clickedEnemy };
+      ui.showEnemy(clickedEnemy);
       return;
     }
 
@@ -241,11 +254,14 @@ async function boot() {
         gameState.tick();
 
         for (const s of survivors) {
-          s.tick(resources, stockpile, poiManager, buildings, gameState.isNight);
+          s.tick(resources, stockpile, poiManager, buildings, gameState.isNight, threats);
         }
 
         // Social interactions
         social.tick(survivors);
+
+        // Threat/combat system
+        threats.tick(survivors, gameState.day, poiManager, buildings);
 
         // Check for new deaths and notify survivors
         for (const s of survivors) {
@@ -298,12 +314,14 @@ async function boot() {
     for (const s of survivors) {
       s.updateVisuals(delta);
     }
+    threats.updateVisuals();
 
     // Night overlay
     nightOverlay.alpha = 1 - gameState.daylight;
 
     // UI
     ui.update(gameState, stockpile);
+    ui.updateRaidWarning(threats.raidStatus);
     ui.updateSurvivorList(survivors, selected?.type === 'survivor' ? selected.entity : null);
     ui.updateBuildMenu(buildings);
     if (selected) {
@@ -315,6 +333,13 @@ async function boot() {
         ui.showStockpileInfo(stockpile);
       } else if (selected.type === 'structure' && selected.entity) {
         ui.showStructure(selected.entity);
+      } else if (selected.type === 'enemy' && selected.entity) {
+        if (selected.entity.isDead) {
+          selected = null;
+          ui.hidePanel();
+        } else {
+          ui.showEnemy(selected.entity);
+        }
       }
     }
 

@@ -7,6 +7,7 @@ import { Inventory, ItemCategory } from './items';
 import { Stockpile } from './stockpile';
 import { POI, POIManager } from './poi';
 import { BuildingManager, Structure } from './building';
+import type { ThreatInfo, Enemy } from './combat';
 
 export type SurvivorState = 'alive' | 'dead';
 type AIGoal =
@@ -17,7 +18,8 @@ type AIGoal =
   | 'seek_bed'
   | 'scavenge'
   | 'haul_to_stockpile'
-  | 'build';
+  | 'build'
+  | 'fight';
 
 const NEED_MAX = 100;
 const HUNGER_DECAY_PER_TICK = 0.15;
@@ -74,6 +76,24 @@ export class Survivor {
   rest = NEED_MAX;
   morale = 70; // starts decent
 
+  // Health
+  hp: number;
+  get maxHp(): number {
+    return 50 + this.stats.strength * 3 + this.stats.resilience * 2;
+  }
+  get injured(): boolean {
+    return this.hp < this.maxHp;
+  }
+
+  // Combat
+  private combatTimer = 0;
+  private fightTarget: Enemy | null = null;
+  private readonly COMBAT_INTERVAL = 5;
+
+  get combatDamage(): number {
+    return 5 + Math.floor(this.stats.strength / 2);
+  }
+
   // Mental break
   private mentalBreak = false;
   private mentalBreakTimer = 0;
@@ -126,6 +146,7 @@ export class Survivor {
 
     // Carry capacity based on strength
     this.inventory = new Inventory(5 + this.stats.strength);
+    this.hp = this.maxHp;
 
     this.tileX = startX;
     this.tileY = startY;
@@ -161,6 +182,14 @@ export class Survivor {
 
   addMorale(amount: number): void {
     this.morale = Math.min(MORALE_MAX, this.morale + amount);
+  }
+
+  takeDamage(amount: number): void {
+    this.hp = Math.max(0, this.hp - amount);
+  }
+
+  heal(amount: number): void {
+    this.hp = Math.min(this.maxHp, this.hp + amount);
   }
 
   /** Work speed multiplier based on stats and morale */
@@ -201,8 +230,30 @@ export class Survivor {
     poiManager: POIManager,
     buildings: BuildingManager,
     isNight: boolean,
+    threats?: ThreatInfo,
   ): void {
     if (this.state === 'dead') return;
+
+    // HP death check
+    if (this.hp <= 0) {
+      this.die();
+      return;
+    }
+
+    // Healing: slow natural regen, faster when resting, EMT bonus
+    if (this.injured) {
+      let healRate = 0.02; // base passive regen
+      if (this.aiGoal === 'rest' || this.aiGoal === 'seek_bed') healRate = 0.15;
+      if (this.background.title === 'Former EMT') healRate *= 2;
+      this.heal(healRate);
+
+      // Auto-consume medicine when injured
+      const medicine = this.inventory.findByCategory('medicine');
+      if (medicine) {
+        this.heal(medicine.value);
+        this.inventory.remove(medicine);
+      }
+    }
 
     // Decay needs
     this.hunger -= HUNGER_DECAY_PER_TICK;
@@ -284,8 +335,30 @@ export class Survivor {
       return;
     }
 
+    // Handle active combat
+    if (this.aiGoal === 'fight' && this.fightTarget && threats) {
+      if (this.fightTarget.isDead) {
+        this.fightTarget = null;
+        this.combatTimer = 0;
+      } else {
+        const dx = this.fightTarget.tileX - this.tileX;
+        const dy = this.fightTarget.tileY - this.tileY;
+        if (dx * dx + dy * dy <= 2) {
+          // Adjacent — attack on timer
+          this.combatTimer++;
+          const interval = Math.max(2, Math.round(this.COMBAT_INTERVAL / this.workSpeed));
+          if (this.combatTimer >= interval) {
+            this.combatTimer = 0;
+            threats.attackEnemy(this.fightTarget, this.combatDamage);
+          }
+          return; // stay and fight
+        }
+        // Not adjacent — fall through to movement
+      }
+    }
+
     // Decide what to do
-    this.decideGoal(resources, stockpile, poiManager, buildings, isNight);
+    this.decideGoal(resources, stockpile, poiManager, buildings, isNight, threats);
 
     // Try to consume from ground or stockpile
     this.tryConsume(resources, stockpile);
@@ -297,7 +370,7 @@ export class Survivor {
     this.moveTimer++;
     if (this.moveTimer >= this.MOVE_INTERVAL) {
       this.moveTimer = 0;
-      this.executeBehavior(resources, stockpile, poiManager, buildings);
+      this.executeBehavior(resources, stockpile, poiManager, buildings, threats);
     }
   }
 
@@ -319,7 +392,22 @@ export class Survivor {
     poiManager: POIManager,
     buildings: BuildingManager,
     isNight: boolean,
+    threats?: ThreatInfo,
   ): void {
+    // Fight nearby enemies (unless HP is critically low — flee by wandering)
+    if (threats) {
+      const enemy = threats.nearestEnemy(this.tileX, this.tileY, 10);
+      if (enemy) {
+        if (this.hp > this.maxHp * 0.25) {
+          this.aiGoal = 'fight';
+          this.fightTarget = enemy;
+          this.combatTimer = 0;
+          return;
+        }
+        // HP too low — don't fight, fall through to needs/wander
+      }
+    }
+
     // Urgent needs always override
     if (this.thirst < NEED_URGENT_THRESHOLD) {
       if (this.hasConsumable('water') || this.canFindConsumable('water', resources, stockpile)) {
@@ -472,8 +560,20 @@ export class Survivor {
     stockpile: Stockpile,
     poiManager: POIManager,
     buildings: BuildingManager,
+    _threats?: ThreatInfo,
   ): void {
     switch (this.aiGoal) {
+      case 'fight': {
+        if (!this.fightTarget || this.fightTarget.isDead) {
+          this.aiGoal = 'wander';
+          this.fightTarget = null;
+          return;
+        }
+        // Move toward enemy
+        this.moveToward(this.fightTarget.tileX, this.fightTarget.tileY, poiManager, buildings);
+        break;
+      }
+
       case 'rest':
         return; // stay put
 
@@ -763,12 +863,17 @@ export class Survivor {
     const gap = 2;
     const startX = -barW / 2;
 
-    const bars: [number, number][] = [
+    const bars: [number, number][] = [];
+    // Only show HP bar when injured
+    if (this.injured) {
+      bars.push([(this.hp / this.maxHp) * 100, 0xc04040]);
+    }
+    bars.push(
       [this.hunger, 0xc47030],
       [this.thirst, 0x4090d0],
       [this.rest, 0x90b048],
       [this.morale, 0xc0a0d0],
-    ];
+    );
 
     bars.forEach(([value, color], i) => {
       const y = -(i * (barH + gap));
@@ -787,6 +892,7 @@ export class Survivor {
     if (this.isScavenging) return 'Scavenging...';
     if (this.isBuilding) return 'Building...';
     switch (this.aiGoal) {
+      case 'fight': return 'Fighting!';
       case 'wander': return 'Wandering';
       case 'seek_food': return 'Seeking food';
       case 'seek_water': return 'Seeking water';
@@ -807,6 +913,7 @@ export class Survivor {
       tileX: this.tileX,
       tileY: this.tileY,
       state: this.state,
+      hp: this.hp,
       hunger: this.hunger,
       thirst: this.thirst,
       rest: this.rest,
@@ -825,6 +932,7 @@ export class Survivor {
     this.pixelX = this.tileX * TILE_SIZE + TILE_SIZE / 2;
     this.pixelY = this.tileY * TILE_SIZE + TILE_SIZE / 2;
     this.state = (data['state'] as SurvivorState) ?? 'alive';
+    this.hp = (data['hp'] as number) ?? this.maxHp;
     this.hunger = (data['hunger'] as number) ?? NEED_MAX;
     this.thirst = (data['thirst'] as number) ?? NEED_MAX;
     this.rest = (data['rest'] as number) ?? NEED_MAX;

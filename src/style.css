@@ -168,6 +168,7 @@ body {
   transition: width 0.3s;
 }
 
+.need-bar-fill.hp { background: #c04040; }
 .need-bar-fill.food { background: #c47030; }
 .need-bar-fill.water { background: #4090d0; }
 .need-bar-fill.rest { background: #90b048; }
@@ -289,6 +290,31 @@ body {
 
 #mode-indicator.hidden {
   display: none;
+}
+
+#raid-warning {
+  position: absolute;
+  top: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(140, 30, 20, 0.9);
+  border: 2px solid #c04040;
+  border-radius: 6px;
+  padding: 8px 20px;
+  font-size: 14px;
+  font-weight: bold;
+  color: #ff8080;
+  animation: raid-pulse 1s ease-in-out infinite;
+  white-space: nowrap;
+}
+
+#raid-warning.hidden {
+  display: none;
+}
+
+@keyframes raid-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
 }
 
 #panel-priorities {
@@ -413,6 +439,10 @@ body {
 
 .survivor-dot.dead {
   background: #666;
+}
+
+.survivor-dot.injured {
+  background: #c04040;
 }
 
 .survivor-entry-name {

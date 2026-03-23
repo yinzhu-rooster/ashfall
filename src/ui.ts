@@ -6,6 +6,7 @@ import { ItemCategory } from './items';
 import { BuildingManager, StructureType, STRUCTURE_DEFS } from './building';
 import { SocialManager } from './social';
 import { WorkType, WorkPriority } from './types';
+import type { Enemy } from './combat';
 
 export type InteractionMode = 'select' | 'stockpile' | 'build';
 
@@ -34,6 +35,7 @@ export class UI {
   private buildMenu: HTMLElement;
   private modeIndicator: HTMLElement;
   private survivorList: HTMLElement;
+  private raidWarning: HTMLElement;
 
   interactionMode: InteractionMode = 'select';
   selectedBuildType: StructureType | null = null;
@@ -76,6 +78,7 @@ export class UI {
     this.buildMenu = document.getElementById('build-menu')!;
     this.modeIndicator = document.getElementById('mode-indicator')!;
     this.survivorList = document.getElementById('survivor-list')!;
+    this.raidWarning = document.getElementById('raid-warning')!;
 
     this.btnStockpile.addEventListener('click', () => {
       this.setMode(this.interactionMode === 'stockpile' ? 'select' : 'stockpile');
@@ -148,12 +151,16 @@ export class UI {
 
     // Needs
     this.panelNeeds.innerHTML = '';
-    const needs: [string, string, number][] = [
+    const needs: [string, string, number][] = [];
+    if (survivor.injured) {
+      needs.push(['HP', 'hp', (survivor.hp / survivor.maxHp) * 100]);
+    }
+    needs.push(
       ['Hunger', 'food', survivor.hunger],
       ['Thirst', 'water', survivor.thirst],
       ['Rest', 'rest', survivor.rest],
       ['Morale', 'morale', survivor.morale],
-    ];
+    );
     for (const [label, cls, value] of needs) {
       const row = document.createElement('div');
       row.className = 'need-row';
@@ -295,7 +302,7 @@ export class UI {
     // Build a hash to detect changes — avoid full DOM rebuild every frame
     const hash = survivors.map((s) => {
       const lowest = Math.min(s.hunger, s.thirst, s.rest);
-      return `${s.name}:${s.state}:${Math.round(lowest)}:${s === selected ? 1 : 0}`;
+      return `${s.name}:${s.state}:${Math.round(lowest)}:${s === selected ? 1 : 0}:${s.injured ? 1 : 0}`;
     }).join('|');
     if (hash === this.lastSurvivorListHash) return;
     this.lastSurvivorListHash = hash;
@@ -316,6 +323,7 @@ export class UI {
       const dot = document.createElement('div');
       dot.className = 'survivor-dot';
       if (s.state === 'dead') dot.classList.add('dead');
+      else if (s.injured) dot.classList.add('injured');
 
       const name = document.createElement('span');
       name.className = 'survivor-entry-name';
@@ -342,6 +350,35 @@ export class UI {
       });
 
       this.survivorList.appendChild(entry);
+    }
+  }
+
+  showEnemy(enemy: Enemy): void {
+    this.entityPanel.classList.remove('hidden');
+    this.panelName.textContent = enemy.def.label;
+    this.panelBackground.textContent = `HP: ${Math.round(enemy.hp)}/${enemy.maxHp}`;
+    this.panelNeeds.innerHTML = '';
+    const row = document.createElement('div');
+    row.className = 'need-row';
+    const hpPct = (enemy.hp / enemy.maxHp) * 100;
+    row.innerHTML = `
+      <span class="need-label">HP</span>
+      <div class="need-bar-bg"><div class="need-bar-fill hp" style="width:${hpPct}%"></div></div>
+      <span class="need-value">${Math.round(enemy.hp)}</span>
+    `;
+    this.panelNeeds.appendChild(row);
+    this.panelActivity.textContent = `Damage: ${enemy.def.damage}`;
+    this.panelPriorities.innerHTML = '';
+    this.panelInventory.innerHTML = '';
+    this.panelStats.innerHTML = '';
+  }
+
+  updateRaidWarning(status: string | null): void {
+    if (status) {
+      this.raidWarning.textContent = status;
+      this.raidWarning.classList.remove('hidden');
+    } else {
+      this.raidWarning.classList.add('hidden');
     }
   }
 
